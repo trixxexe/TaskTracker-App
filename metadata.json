@@ -1,0 +1,6 @@
+{
+  "name": "Task Planner",
+  "description": "A fully offline, modern Task Planner and Habit Tracker with interactive progress analytics, priority tagging, and habit streaks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
