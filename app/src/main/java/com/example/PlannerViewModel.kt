@@ -18,6 +18,12 @@ enum class AppScreen {
     INSIGHTS
 }
 
+enum class TaskSortOrder {
+    DUE_DATE,
+    PRIORITY,
+    TITLE
+}
+
 class PlannerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: PlannerRepository
@@ -67,15 +73,27 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     private val _taskStatusFilter = MutableStateFlow("All")
     val taskStatusFilter: StateFlow<String> = _taskStatusFilter.asStateFlow()
 
+    private val _taskSortOrder = MutableStateFlow(TaskSortOrder.DUE_DATE)
+    val taskSortOrder: StateFlow<TaskSortOrder> = _taskSortOrder.asStateFlow()
+
     // Combined filtered tasks flow
     val filteredTasks: StateFlow<List<TaskEntity>> = combine(
         allTasks,
         _taskSearchQuery,
         _taskCategoryFilter,
         _taskPriorityFilter,
-        _taskStatusFilter
-    ) { tasks, query, category, priority, status ->
-        tasks.filter { task ->
+        _taskStatusFilter,
+        _taskSortOrder
+    ) { flowArray ->
+        @Suppress("UNCHECKED_CAST")
+        val tasks = flowArray[0] as List<TaskEntity>
+        val query = flowArray[1] as String
+        val category = flowArray[2] as String
+        val priority = flowArray[3] as String
+        val status = flowArray[4] as String
+        val sortOrder = flowArray[5] as TaskSortOrder
+
+        val filtered = tasks.filter { task ->
             val matchesSearch = task.title.contains(query, ignoreCase = true) ||
                     task.description.contains(query, ignoreCase = true)
             val matchesCategory = category == "All" || task.category == category
@@ -87,6 +105,19 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
                 else -> true
             }
             matchesSearch && matchesCategory && matchesPriority && matchesStatus
+        }
+
+        when (sortOrder) {
+            TaskSortOrder.DUE_DATE -> filtered.sortedBy { it.dueDate }
+            TaskSortOrder.PRIORITY -> filtered.sortedByDescending {
+                when (it.priority) {
+                    "High" -> 3
+                    "Medium" -> 2
+                    "Low" -> 1
+                    else -> 0
+                }
+            }
+            TaskSortOrder.TITLE -> filtered.sortedBy { it.title.lowercase() }
         }
     }.stateIn(
         scope = viewModelScope,
@@ -109,6 +140,10 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
 
     fun setTaskStatusFilter(status: String) {
         _taskStatusFilter.value = status
+    }
+
+    fun setTaskSortOrder(order: TaskSortOrder) {
+        _taskSortOrder.value = order
     }
 
     // Core actions
@@ -150,12 +185,12 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun toggleHabitCompletion(habit: HabitEntity) {
+    fun toggleHabitCompletion(habit: HabitEntity, dateLong: Long = 0L) {
         viewModelScope.launch {
             val calendar = Calendar.getInstance()
-            val dateLong = getYYYYMMDD(calendar)
+            val finalDate = if (dateLong == 0L) getYYYYMMDD(calendar) else dateLong
             val currentLogs = allLogs.value
-            repository.toggleHabitCompletion(habit, dateLong, currentLogs)
+            repository.toggleHabitCompletion(habit, finalDate, currentLogs)
         }
     }
 

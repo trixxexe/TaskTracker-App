@@ -47,6 +47,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -201,22 +206,31 @@ fun PlannerApp() {
                 AppScreen.INSIGHTS -> "Analytics"
             }, subtitle = todayDate)
 
-            // Dynamic screen swap based on enum state
-            when (currentScreen) {
-                AppScreen.TASKS -> TasksScreen(
-                    tasks = tasks,
-                    viewModel = viewModel
-                )
-                AppScreen.HABITS -> HabitsScreen(
-                    habits = habits,
-                    logs = logs,
-                    viewModel = viewModel
-                )
-                AppScreen.INSIGHTS -> InsightsScreen(
-                    tasks = tasks,
-                    habits = habits,
-                    logs = logs
-                )
+            // Dynamic screen swap with smooth animations based on enum state
+            AnimatedContent(
+                targetState = currentScreen,
+                transitionSpec = {
+                    fadeIn(animationSpec = tween(250)).togetherWith(fadeOut(animationSpec = tween(200)))
+                },
+                label = "screen_transition",
+                modifier = Modifier.weight(1f)
+            ) { screen ->
+                when (screen) {
+                    AppScreen.TASKS -> TasksScreen(
+                        tasks = tasks,
+                        viewModel = viewModel
+                    )
+                    AppScreen.HABITS -> HabitsScreen(
+                        habits = habits,
+                        logs = logs,
+                        viewModel = viewModel
+                    )
+                    AppScreen.INSIGHTS -> InsightsScreen(
+                        tasks = tasks,
+                        habits = habits,
+                        logs = logs
+                    )
+                }
             }
         }
     }
@@ -279,12 +293,55 @@ fun TasksScreen(
     val activeCategory by viewModel.taskCategoryFilter.collectAsStateWithLifecycle()
     val activePriority by viewModel.taskPriorityFilter.collectAsStateWithLifecycle()
     val activeStatus by viewModel.taskStatusFilter.collectAsStateWithLifecycle()
+    val currentSortOrder by viewModel.taskSortOrder.collectAsStateWithLifecycle()
 
     val categories = listOf("All", "Work", "Personal", "Health", "Finance")
     val priorities = listOf("All", "Low", "Medium", "High")
     val statuses = listOf("All" to "All", "Pending" to "Pending", "Completed" to "Completed")
 
+    var quickTaskTitle by remember { mutableStateOf("") }
+
     Column(modifier = Modifier.fillMaxSize()) {
+        // Quick Task Bar (Direct high-speed entry)
+        OutlinedTextField(
+            value = quickTaskTitle,
+            onValueChange = { quickTaskTitle = it },
+            placeholder = { Text("Quick add task (press Enter or +)...", fontSize = 13.sp) },
+            trailingIcon = {
+                IconButton(
+                    onClick = {
+                        if (quickTaskTitle.trim().isNotEmpty()) {
+                            viewModel.addTask(
+                                title = quickTaskTitle.trim(),
+                                description = "",
+                                category = "Work",
+                                dueDate = Calendar.getInstance().timeInMillis,
+                                priority = "Medium"
+                            )
+                            quickTaskTitle = ""
+                        }
+                    },
+                    enabled = quickTaskTitle.trim().isNotEmpty()
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Add Task")
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .testTag("task_quick_add"),
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                focusedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f),
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f)
+            )
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
         // Search Bar
         OutlinedTextField(
             value = searchQuery,
@@ -417,6 +474,48 @@ fun TasksScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Sort Selector Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "Sort by",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            listOf(
+                TaskSortOrder.DUE_DATE to "Due Date",
+                TaskSortOrder.PRIORITY to "Priority",
+                TaskSortOrder.TITLE to "Title"
+            ).forEach { (order, label) ->
+                val isSelected = currentSortOrder == order
+                val containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                val contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(containerColor)
+                        .clickable { viewModel.setTaskSortOrder(order) }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        label,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = contentColor
+                    )
                 }
             }
         }
@@ -619,8 +718,10 @@ fun HabitsScreen(
 
                 HabitCard(
                     habit = habit,
+                    logs = logs,
                     isCompletedToday = isCompletedToday,
                     onToggleCompletion = { viewModel.toggleHabitCompletion(habit) },
+                    onToggleDate = { dateVal -> viewModel.toggleHabitCompletion(habit, dateVal) },
                     onDelete = { viewModel.deleteHabit(habit) }
                 )
             }
@@ -631,8 +732,10 @@ fun HabitsScreen(
 @Composable
 fun HabitCard(
     habit: HabitEntity,
+    logs: List<HabitLogEntity>,
     isCompletedToday: Boolean,
     onToggleCompletion: () -> Unit,
+    onToggleDate: (Long) -> Unit,
     onDelete: () -> Unit
 ) {
     val accentColor = Color(android.graphics.Color.parseColor(habit.colorHex))
@@ -647,98 +750,240 @@ fun HabitCard(
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(16.dp)
         ) {
-            // Interactive circular completion button
-            Box(
-                modifier = Modifier
-                    .size(54.dp)
-                    .clip(CircleShape)
-                    .background(if (isCompletedToday) accentColor else accentColor.copy(alpha = 0.15f))
-                    .clickable { onToggleCompletion() }
-                    .border(2.dp, accentColor, CircleShape)
-                    .testTag("habit_toggle_${habit.id}"),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isCompletedToday) {
-                    Icon(
-                        Icons.Filled.Check,
-                        contentDescription = "Completed Today",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                } else {
-                    Text(
-                        "GO",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = accentColor
-                    )
+                // Interactive circular completion button
+                Box(
+                    modifier = Modifier
+                        .size(54.dp)
+                        .clip(CircleShape)
+                        .background(if (isCompletedToday) accentColor else accentColor.copy(alpha = 0.15f))
+                        .clickable { onToggleCompletion() }
+                        .border(2.dp, accentColor, CircleShape)
+                        .testTag("habit_toggle_${habit.id}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isCompletedToday) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = "Completed Today",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    } else {
+                        Text(
+                            "GO",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor
+                        )
+                    }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(14.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    habit.name,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (habit.description.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        habit.description,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        habit.name,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (habit.description.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            habit.description,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Stats / Streak indicator
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "🔥 Streak: ",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFF9800)
+                        )
+                        Text(
+                            "${habit.streakCount} days",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Stats / Streak indicator
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
+                IconButton(
+                    onClick = { onDelete() },
+                    modifier = Modifier.testTag("habit_delete_${habit.id}")
                 ) {
-                    Text(
-                        "🔥 Streak: ",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFF9800)
-                    )
-                    Text(
-                        "${habit.streakCount} days",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "Delete",
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                     )
                 }
             }
 
-            IconButton(
-                onClick = { onDelete() },
-                modifier = Modifier.testTag("habit_delete_${habit.id}")
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Last 7 Days Interactive Completion Bubbles Row
+            val last7Days = remember(logs) {
+                (0..6).map { offset ->
+                    val cal = Calendar.getInstance()
+                    cal.add(Calendar.DAY_OF_YEAR, -offset)
+                    val dateVal = (cal.get(Calendar.YEAR) * 10000L) + ((cal.get(Calendar.MONTH) + 1) * 100L) + cal.get(Calendar.DAY_OF_MONTH)
+                    val letter = SimpleDateFormat("EEEEE", Locale.getDefault()).format(cal.time) // Single-letter day name (e.g. M, T, W, T, F, S, S)
+                    Triple(dateVal, letter, offset == 0) // IsToday is true if offset is 0
+                }.reversed()
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-                )
+                last7Days.forEach { (dateVal, letter, isToday) ->
+                    val isCompleted = logs.any { it.habitId == habit.id && it.completedDate == dateVal }
+                    val bubbleColor = if (isCompleted) accentColor else Color.Transparent
+                    val textColor = if (isCompleted) Color.White else if (isToday) accentColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    val borderColor = if (isToday) accentColor else accentColor.copy(alpha = 0.3f)
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { onToggleDate(dateVal) }
+                            .padding(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(bubbleColor)
+                                .border(1.5.dp, borderColor, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = letter,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = textColor
+                            )
+                        }
+                        if (isToday) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text("•", fontSize = 10.sp, color = accentColor, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
         }
     }
 }
 
 // =================== INSIGHTS TAB ===================
+
+@Composable
+fun HabitTrendChart(logs: List<HabitLogEntity>, totalHabits: Int) {
+    val last7Days = remember(logs) {
+        (0..6).map { offset ->
+            val cal = Calendar.getInstance()
+            cal.add(Calendar.DAY_OF_YEAR, -offset)
+            val dateVal = (cal.get(Calendar.YEAR) * 10000L) + ((cal.get(Calendar.MONTH) + 1) * 100L) + cal.get(Calendar.DAY_OF_MONTH)
+            val label = SimpleDateFormat("EEE", Locale.getDefault()).format(cal.time)
+            val completedCount = logs.count { it.completedDate == dateVal }
+            label to completedCount
+        }.reversed()
+    }
+
+    val maxCompleted = if (totalHabits > 0) totalHabits else 5
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Text(
+                "Habit Trend (Last 7 Days)",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                last7Days.forEach { (label, count) ->
+                    val fraction = if (maxCompleted > 0) count.toFloat() / maxCompleted.toFloat() else 0f
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        // Count badge above the bar
+                        Text(
+                            text = count.toString(),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        // Visual Bar
+                        Box(
+                            modifier = Modifier
+                                .width(16.dp)
+                                .height((80 * fraction.coerceIn(0.01f, 1f)).dp)
+                                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            MaterialTheme.colorScheme.primary,
+                                            MaterialTheme.colorScheme.secondary
+                                        )
+                                    )
+                                )
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun InsightsScreen(
@@ -831,6 +1076,11 @@ fun InsightsScreen(
                     }
                 }
             }
+        }
+
+        // Habit Trend Bar Chart
+        item {
+            HabitTrendChart(logs = logs, totalHabits = totalHabits)
         }
 
         // Custom Donut Chart for Tasks Distribution
