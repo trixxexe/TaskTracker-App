@@ -21,7 +21,8 @@ enum class AppScreen {
 enum class TaskSortOrder {
     DUE_DATE,
     PRIORITY,
-    TITLE
+    TITLE,
+    MANUAL
 }
 
 class PlannerViewModel(application: Application) : AndroidViewModel(application) {
@@ -118,6 +119,7 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             TaskSortOrder.TITLE -> filtered.sortedBy { it.title.lowercase() }
+            TaskSortOrder.MANUAL -> filtered.sortedBy { it.displayOrder }
         }
     }.stateIn(
         scope = viewModelScope,
@@ -149,15 +151,31 @@ class PlannerViewModel(application: Application) : AndroidViewModel(application)
     // Core actions
     fun addTask(title: String, description: String, category: String, dueDate: Long, priority: String) {
         viewModelScope.launch {
+            val nextOrder = (allTasks.value.maxOfOrNull { it.displayOrder } ?: -1) + 1
             repository.insertTask(
                 TaskEntity(
                     title = title,
                     description = description,
                     category = category,
                     dueDate = dueDate,
-                    priority = priority
+                    priority = priority,
+                    displayOrder = nextOrder
                 )
             )
+        }
+    }
+
+    fun reorderTasks(tasksList: List<TaskEntity>, fromIndex: Int, toIndex: Int) {
+        if (fromIndex !in tasksList.indices || toIndex !in tasksList.indices) return
+        viewModelScope.launch {
+            val mutableList = tasksList.toMutableList()
+            val movedItem = mutableList.removeAt(fromIndex)
+            mutableList.add(toIndex, movedItem)
+            
+            val updatedList = mutableList.mapIndexed { index, task ->
+                task.copy(displayOrder = index)
+            }
+            repository.insertTasks(updatedList)
         }
     }
 

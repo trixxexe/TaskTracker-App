@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -35,6 +36,12 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -497,7 +504,8 @@ fun TasksScreen(
             listOf(
                 TaskSortOrder.DUE_DATE to "Due Date",
                 TaskSortOrder.PRIORITY to "Priority",
-                TaskSortOrder.TITLE to "Title"
+                TaskSortOrder.TITLE to "Title",
+                TaskSortOrder.MANUAL to "Manual"
             ).forEach { (order, label) ->
                 val isSelected = currentSortOrder == order
                 val containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
@@ -536,9 +544,12 @@ fun TasksScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
-                items(tasks, key = { it.id }) { task ->
+                itemsIndexed(tasks, key = { _, task -> task.id }) { index, task ->
                     TaskCard(
                         task = task,
+                        isManualOrder = currentSortOrder == TaskSortOrder.MANUAL,
+                        onMoveUp = if (index > 0) { { viewModel.reorderTasks(tasks, index, index - 1) } } else null,
+                        onMoveDown = if (index < tasks.size - 1) { { viewModel.reorderTasks(tasks, index, index + 1) } } else null,
                         onToggle = { viewModel.toggleTaskCompletion(task) },
                         onDelete = { viewModel.deleteTask(task) }
                     )
@@ -551,9 +562,61 @@ fun TasksScreen(
 @Composable
 fun TaskCard(
     task: TaskEntity,
+    isManualOrder: Boolean,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
     onToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
+    val calendar = remember { Calendar.getInstance() }
+    var showReminderDialog by remember { mutableStateOf(false) }
+
+    if (showReminderDialog) {
+        AlertDialog(
+            onDismissRequest = { showReminderDialog = false },
+            title = { Text("Task Reminder") },
+            text = { Text("Set a repeating daily local reminder for this task.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showReminderDialog = false
+                        val timePickerDialog = android.app.TimePickerDialog(
+                            context,
+                            { _, selectedHour, selectedMinute ->
+                                ReminderManager.scheduleReminder(
+                                    context = context,
+                                    id = task.id,
+                                    title = "Task Reminder: ${task.title}",
+                                    description = task.description.ifEmpty { "Time to work on your task!" },
+                                    hour = selectedHour,
+                                    minute = selectedMinute,
+                                    type = "Task"
+                                )
+                            },
+                            calendar.get(Calendar.HOUR_OF_DAY),
+                            calendar.get(Calendar.MINUTE),
+                            true
+                        )
+                        timePickerDialog.show()
+                    }
+                ) {
+                    Text("Set Time")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showReminderDialog = false
+                        ReminderManager.cancelReminder(context, task.id, "Task")
+                    }
+                ) {
+                    Text("Cancel Existing", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
+    }
+
     val categoryColor = when (task.category) {
         "Work" -> Color(0xFF3F51B5)
         "Personal" -> Color(0xFF4CAF50)
@@ -677,6 +740,38 @@ fun TaskCard(
                 }
             }
 
+            if (isManualOrder) {
+                if (onMoveUp != null) {
+                    IconButton(onClick = onMoveUp) {
+                        Icon(
+                            Icons.Filled.ArrowUpward,
+                            contentDescription = "Move Up",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                if (onMoveDown != null) {
+                    IconButton(onClick = onMoveDown) {
+                        Icon(
+                            Icons.Filled.ArrowDownward,
+                            contentDescription = "Move Down",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            IconButton(
+                onClick = { showReminderDialog = true },
+                modifier = Modifier.testTag("task_reminder_${task.id}")
+            ) {
+                Icon(
+                    Icons.Filled.Notifications,
+                    contentDescription = "Set Reminder",
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                )
+            }
+
             IconButton(
                 onClick = { onDelete() },
                 modifier = Modifier.testTag("task_delete_${task.id}")
@@ -738,6 +833,55 @@ fun HabitCard(
     onToggleDate: (Long) -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
+    val calendar = remember { Calendar.getInstance() }
+    var showReminderDialog by remember { mutableStateOf(false) }
+
+    if (showReminderDialog) {
+        AlertDialog(
+            onDismissRequest = { showReminderDialog = false },
+            title = { Text("Habit Reminder") },
+            text = { Text("Set a repeating daily local reminder to stay on track with: ${habit.name}") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showReminderDialog = false
+                        val timePickerDialog = android.app.TimePickerDialog(
+                            context,
+                            { _, selectedHour, selectedMinute ->
+                                ReminderManager.scheduleReminder(
+                                    context = context,
+                                    id = habit.id,
+                                    title = "Habit Reminder: ${habit.name}",
+                                    description = habit.description.ifEmpty { "Time to complete your daily habit!" },
+                                    hour = selectedHour,
+                                    minute = selectedMinute,
+                                    type = "Habit"
+                                )
+                            },
+                            calendar.get(Calendar.HOUR_OF_DAY),
+                            calendar.get(Calendar.MINUTE),
+                            true
+                        )
+                        timePickerDialog.show()
+                    }
+                ) {
+                    Text("Set Time")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showReminderDialog = false
+                        ReminderManager.cancelReminder(context, habit.id, "Habit")
+                    }
+                ) {
+                    Text("Cancel Existing", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
+    }
+
     val accentColor = Color(android.graphics.Color.parseColor(habit.colorHex))
 
     Card(
@@ -828,6 +972,17 @@ fun HabitCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
+                }
+
+                IconButton(
+                    onClick = { showReminderDialog = true },
+                    modifier = Modifier.testTag("habit_reminder_${habit.id}")
+                ) {
+                    Icon(
+                        Icons.Filled.Notifications,
+                        contentDescription = "Set Reminder",
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                    )
                 }
 
                 IconButton(

@@ -13,6 +13,10 @@ class PlannerRepository(private val taskDao: TaskDao, private val habitDao: Habi
         taskDao.insertTask(task)
     }
 
+    suspend fun insertTasks(tasks: List<TaskEntity>) {
+        taskDao.insertTasks(tasks)
+    }
+
     suspend fun deleteTask(task: TaskEntity) {
         taskDao.deleteTask(task)
     }
